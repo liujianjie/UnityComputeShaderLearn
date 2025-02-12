@@ -1,7 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-
+//https://zhuanlan.zhihu.com/p/368307575
 public class GettingStarted : MonoBehaviour
 {
     public ComputeShader computeShader;
