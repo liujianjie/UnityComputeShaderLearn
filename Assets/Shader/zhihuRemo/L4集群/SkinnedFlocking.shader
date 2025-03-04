@@ -1,4 +1,4 @@
-Shader "Flocking/Instanced" { 
+Shader "Flocking/Skinned" { 
 	Properties{
 		_Color("Color", Color) = (1, 1, 1, 1)
 		_MainTex("Albedo (RGB)", 2D) = "white" {}
@@ -10,10 +10,22 @@ Shader "Flocking/Instanced" {
 	SubShader{
 
 		CGPROGRAM
+        #include "UnityCG.cginc"
 
 		sampler2D _MainTex;
 		sampler2D _BumpMap;
 		sampler2D _MetallicGlossMap;
+		struct appdata_custom {
+			float4 vertex :POSITION;
+			float3 normal : NORMAL;
+			float4 texcoord : TEXCOORD0;
+			float4 tangent : TANGENT;
+
+			uint id : SV_VertexID;
+			uint inst : SV_InstanceID;
+
+			UNITY_VERTEX_INPUT_INSTANCE_ID
+		};
 
 		struct Input{
 			float2 uv_MainTex;
@@ -24,12 +36,15 @@ Shader "Flocking/Instanced" {
 		half _Metallic;
 		fixed4 _Color;
 
+		#pragma multi_compile __ FRAME_INTERPOLATION					// 对应cs的FRAME_INTERPOLATION开启关键字
 		#pragma surface surf Standard vertex:vert addshadow nolightmap// 自动生成阴影投射代码 不使用光照贴图
 		#pragma instancing_options procedural:setup // 启用GPU实例化，并指定setup函数作为实例化数据准备函数
 
-		float4x4 _LookAtMatrix;
 		float4x4 _Matrix;
-		float3 _BoidPosition;
+		int _CurrentFrame;
+		int _NextFrame;
+		float _FrameInterpolation;
+		int numOfFrames;
 
 		#ifdef UNITY_PROCEDURAL_INSTANCING_ENABLED
 			struct Boid
@@ -37,21 +52,14 @@ Shader "Flocking/Instanced" {
 				float3 position;
 				float3 direction;// float3 写错成 float 
 				float noise_offset;
+				float speed;
+				float frame;
+				float3 padding;
 			};
 			StructuredBuffer<Boid> boidsBuffer;
+			StructuredBuffer<float4> vertexAnimation;
 		#endif
 
-		float4x4 look_at_matrix(float3 dir, float3 up){
-			float3 zaxis = normalize(dir);
-			float3 xaxis = normalize(cross(up, zaxis));
-			float3 yaxis = cross(zaxis, xaxis);
-			return float4x4(
-				xaxis.x, yaxis.x, zaxis.x, 0,	
-				xaxis.y, yaxis.y, zaxis.y, 0,
-				xaxis.z, yaxis.z, zaxis.z, 0,
-				0, 0, 0, 1
-			);
-		}
 		float4x4 create_matrix(float3 pos, float3 dir, float3 up){		// float3 写错成 float 
 			float3 zaxis = normalize(dir);
 			float3 xaxis = normalize(cross(up, zaxis));
@@ -63,13 +71,14 @@ Shader "Flocking/Instanced" {
 				0, 0, 0, 1
 			);
 		}
-		void vert(inout appdata_full v, out Input data)
+		void vert(inout appdata_custom v)
 		{
-			UNITY_INITIALIZE_OUTPUT(Input, data);
-
 			#ifdef UNITY_PROCEDURAL_INSTANCING_ENABLED
-                //v.vertex = mul(_LookAtMatrix, v.vertex);
-                //v.vertex.xyz += _BoidPosition;
+				#ifdef FRAME_INTERPOLATION
+					v.vertex = lerp(vertexAnimation[v.id * numOfFrames + _CurrentFrame], vertexAnimation[v.id * numOfFrames + _NextFrame], _FrameInterpolation);// 在上一帧和下一帧的顶点位置进行插值
+				#else
+					v.vertex = vertexAnimation[v.id * numOfFrames + _CurrentFrame];	// ；打错
+				#endif
 				v.vertex = mul(_Matrix, v.vertex);
 			#endif
 		}
@@ -77,9 +86,13 @@ Shader "Flocking/Instanced" {
 		void setup()
 		{
 			#ifdef UNITY_PROCEDURAL_INSTANCING_ENABLED
-				_BoidPosition = boidsBuffer[unity_InstanceID].position;
-                //_LookAtMatrix = look_at_matrix(boidsBuffer[unity_InstanceID].direction, float3(0.0, 1.0, 0.0));
 				_Matrix = create_matrix(boidsBuffer[unity_InstanceID].position, boidsBuffer[unity_InstanceID].direction, float3(0.0, 1.0, 0.0));
+				_CurrentFrame = boidsBuffer[unity_InstanceID].frame;
+				#ifdef FRAME_INTERPOLATION
+					_NextFrame = _CurrentFrame + 1;
+					if (_NextFrame >= numOfFrames) _NextFrame = 0;
+					_FrameInterpolation = frac(boidsBuffer[unity_InstanceID].frame);// 取帧的小数作为插值权重
+				#endif
 			#endif
 		}
 		void surf(Input IN, inout SurfaceOutputStandard o)
